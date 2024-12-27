@@ -2,17 +2,20 @@ package main
 
 import (
 	"bufio"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/golang-jwt/jwt/v5"
 	"log"
 	"os"
 	"regexp"
 	"strings"
-
-	"github.com/golang-jwt/jwt/v5"
 )
+
+//go:embed keys.txt
+var keys string
 
 // 从文件中读取密码列表
 func readKeysFromFile(filePath string) ([]string, error) {
@@ -46,7 +49,6 @@ func decodeBase64(input string) ([]byte, error) {
 
 // 解析并验证 JWT
 func parseJWT(tokenString string, secretKeyString string) (*jwt.Token, error) {
-
 	secretKey := []byte(secretKeyString)
 
 	// 将传入的 JWT 字符串解析为 jwt.Token
@@ -61,7 +63,7 @@ func parseJWT(tokenString string, secretKeyString string) (*jwt.Token, error) {
 	return token, err
 }
 
-// 解析并验证 JWT
+// 解析并验证 JWT（Base64 解码密钥）
 func parseJWTKeyBase64(tokenString string, secretKeyString string, decodeKey bool) (*jwt.Token, error) {
 	var secretKey []byte
 	var err error
@@ -77,10 +79,8 @@ func parseJWTKeyBase64(tokenString string, secretKeyString string, decodeKey boo
 		}
 		secretKey, err = decodeBase64(secretKeyString)
 		if err != nil {
-			//return nil, fmt.Errorf("failed to base64 decode key: %s\n", secretKeyString)
-			//fmt.Printf("failed to base64 decode key: %s\n", secretKeyString)
+			// fmt.Printf("failed to base64 decode key: %s\n", secretKeyString)
 		}
-		//secretKey = string(decodedKey) // 使用解码后的密钥
 	} else {
 		secretKey = []byte(secretKeyString)
 	}
@@ -139,7 +139,7 @@ func decodeBase64URL(input string) ([]byte, error) {
 func main() {
 	// 获取命令行参数
 	tokenPtr := flag.String("token", "", "JWT Token to decode")
-	Keys := flag.String("keys", "keys.txt", "Jwt Secret Keys")
+	Keys := flag.String("keys", "", "External Jwt Secret Keys (optional)")
 	isKeyBase64 := flag.Bool("base64", false, "If true, Default decode and Base64 decode the secret key before validating the JWT(Default configuration for Java JJWT)")
 	flag.Parse()
 
@@ -147,14 +147,39 @@ func main() {
 		log.Fatal("JwtCrack -token exxxx.exxx.xxxx \nJwtCrack -base64 true -token exxxx.exxx.xxxx")
 	}
 
-	// 从文件中读取密码列表
-	secretKeys, err := readKeysFromFile(*Keys)
-	if err != nil {
-		log.Fatalf("Failed to read passwords: %v", err)
+	// 使用嵌入的 keys.txt 密钥并去重
+	secretKeys := make(map[string]bool)
+
+	// 从嵌入的 keys.txt 读取密钥
+	lines := strings.Split(keys, "\r\n")
+	for _, line := range lines {
+		secretKey := strings.TrimSpace(line)
+		if secretKey != "" {
+			secretKeys[secretKey] = true
+		}
+	}
+
+	// 如果外部传入了 Keys 参数，读取该文件并添加到密钥列表中
+	if *Keys != "" {
+		externalKeys, err := readKeysFromFile(*Keys)
+		if err != nil {
+			log.Fatalf("Failed to read external keys: %v", err)
+		}
+
+		// 将外部密钥添加到 map 中，自动去重
+		for _, key := range externalKeys {
+			secretKeys[key] = true
+		}
+	}
+
+	// 将所有唯一的密钥放入切片中
+	var uniqueKeys []string
+	for key := range secretKeys {
+		uniqueKeys = append(uniqueKeys, key)
 	}
 
 	// 批量尝试密码
-	for _, secretKey := range secretKeys {
+	for _, secretKey := range uniqueKeys {
 		// 尝试用当前密码解码和验证 JWT
 		token, err := parseJWT(*tokenPtr, secretKey)
 		if err != nil {
@@ -167,7 +192,6 @@ func main() {
 			fmt.Println("Valid Token Found!")
 			fmt.Println("Secret Key: ", secretKey)
 			fmt.Println("Claims:", claims)
-
 			return // 找到有效的密钥后退出
 		}
 	}
@@ -175,7 +199,7 @@ func main() {
 	// 同时启动默认解密和jjwt的解密爆破
 	if *isKeyBase64 {
 		// 批量尝试密码
-		for _, secretKey := range secretKeys {
+		for _, secretKey := range uniqueKeys {
 			// 尝试用当前密码解码和验证 JWT
 			token, err := parseJWTKeyBase64(*tokenPtr, secretKey, *isKeyBase64)
 			if err != nil {
