@@ -69,13 +69,16 @@ func parseJWTKeyBase64(tokenString string, secretKeyString string, decodeKey boo
 	var err error
 	// 如果 -jjwt 参数为 true，首先尝试 Base64 解码密钥
 	if decodeKey {
+		// 将 Base64URL 转为标准 Base64
+		secretKeyString = strings.ReplaceAll(secretKeyString, "-", "+")
+		secretKeyString = strings.ReplaceAll(secretKeyString, "_", "/")
 		// 去除所有非 Base64 字符
 		re := regexp.MustCompile("[^A-Za-z0-9+/=]")
 		secretKeyString = re.ReplaceAllString(secretKeyString, "")
 
 		padding := 4 - len(secretKeyString)%4
 		if padding != 4 {
-			secretKeyString += strings.Repeat("=", 2)
+			secretKeyString += strings.Repeat("=", padding)
 		}
 		secretKey, err = decodeBase64(secretKeyString)
 		if err != nil {
